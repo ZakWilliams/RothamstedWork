@@ -113,7 +113,7 @@ def combine_DQs(chem_DQ1, chem_DQ2, chem_DQ3):
     combined_DQ.fillna('Unacceptable', inplace=True)
     return combined_DQ
 
-def process_data(start_year, end_year, catchments, runoff_chemical, months_range, perc_limit):
+def process_data(start_year, end_year, catchments, runoff_chemical, months_range):
 
     if months_range is None:
         months_range = [1, 12]
@@ -143,17 +143,17 @@ def process_data(start_year, end_year, catchments, runoff_chemical, months_range
         
 
     years = [year for year in range(start_year, end_year + 1)]
-    percentiles_dict = {}
-    qual_given_times_masks = {}
+    means_dict = {}
+    stds_dict = {}
+    std_upper_dict = {}
+    std_lower_dict = {}
 
     for catchment in catchment_dict.keys():
-        cprint(f'Processing catchment {catchment}...', 'cyan')
-
+        means_dict[catchment] = []
+        stds_dict[catchment] = []
+        std_upper_dict[catchment] = []
+        std_lower_dict[catchment] = []
         datetime_vals = catchment_dict[catchment]['Datetime']
-        
-        percentiles_dict[catchment] = {}
-        qual_given_times_masks[catchment] = {}
-
         #cprint(list(catchment_dict[catchment].keys()), 'red')
         cprint(list(catchment_dict[catchment].keys()), 'blue')
         if runoff_chemical != 'Nitrogen':
@@ -165,10 +165,12 @@ def process_data(start_year, end_year, catchments, runoff_chemical, months_range
             chem_DQ = combine_DQs(catchment_dict[catchment][f'NitriteANDNitrate DQ'], catchment_dict[catchment][f'Ammonium DQ'], catchment_dict[catchment][f'Ammonia DQ'])
             chem_DQ = chem_DQ.astype(str)
 
+        cprint(catchment, 'white', 'on_cyan')
         
         
         # edit this bit below which collects the values properly when the valid months is year bridging
         
+
 
         if months_range[1] >= months_range[0]:
             years_loop = [year for year in years if year in datetime_vals.dt.year.values]
@@ -189,24 +191,43 @@ def process_data(start_year, end_year, catchments, runoff_chemical, months_range
 
             #year_mask = (datetime_vals.dt.year == year)
             good_quality_mask = (chem_DQ == 'Acceptable')
-            
-            # for the overlap assesment, create a mask covering overlapping acceptability when same time mask values
-            qual_given_times_masks[catchment][year] = good_quality_mask[time_mask]
-            
-            
             pass_chem_mask = (chem_vals.astype(str) != 'nan')
             # make a cast_float mask, which is true when pass_chem_mask can be successfully cast into a float, and false where not
             numeric_chem_vals = pd.to_numeric(chem_vals, errors="coerce")
             cast_float_mask = pass_chem_mask & numeric_chem_vals.notna()
 
+            #pass_chem_mask2 = (chem_vals.astype(str) != 'Acceptable')
             # cast all chem_DQs into strings
             pass_chem_vals = chem_vals[time_mask & good_quality_mask & pass_chem_mask & cast_float_mask]
 
-            # append to the percentiles dict
-            percentile_linspace = np.linspace(perc_limit[0], perc_limit[1], 102)
-            if len(pass_chem_vals) > 0:
-                percentiles_dict[catchment][year] = np.percentile(pass_chem_vals, percentile_linspace)
-            else:
-                percentiles_dict[catchment][year] = [np.nan]
+            # clip extreme mask - a crude way of eliminating the most extreme, likely erroneous values that are causing very large stds
+            clip_mask = pass_chem_vals <= pass_chem_vals.quantile(1.0)
+            cprint(year, 'cyan')
 
-    return percentiles_dict, qual_given_times_masks
+            if len(pass_chem_vals) > 0:
+                #means_dict[catchment].append(np.mean(pass_chem_vals))
+                means_dict[catchment].append(np.percentile(pass_chem_vals, 50))
+                stds_dict[catchment].append(np.std(pass_chem_vals[clip_mask]))
+                std_upper_dict[catchment].append(np.percentile(pass_chem_vals, (68.27+50)/2)-np.percentile(pass_chem_vals, 50))
+                std_lower_dict[catchment].append(np.percentile(pass_chem_vals, 50)-np.percentile(pass_chem_vals, (100-68.27)/2))
+            else:
+                means_dict[catchment].append(np.nan)
+                stds_dict[catchment].append(np.nan)
+                std_upper_dict[catchment].append(np.nan)
+                std_lower_dict[catchment].append(np.nan)
+
+            #means_dict[catchment].append(chem_vals[year_mask].mean())
+            #stds_dict[catchment].append(chem_vals[year_mask].std())
+
+    #cprint(means_dict, 'red')
+    #cprint(stds_dict, 'yellow')
+    #cprint(std_upper_dict, 'blue')
+    #cprint(std_lower_dict, 'green')
+
+    # isolate the desired chemical
+    # initially, build a catchment dict which retains the valid by-15-minute recordings of the runoffs for each catchment
+    # then, compress these into once-yearly numbers, with the mean and standard deviations.
+
+
+
+    return {'means' : means_dict, 'stds' : stds_dict, 'std_upper' : std_upper_dict, 'std_lower' : std_lower_dict}
